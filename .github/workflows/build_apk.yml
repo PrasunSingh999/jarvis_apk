@@ -30,6 +30,10 @@ jobs:
       - name: Install Dependencies
         run: flutter pub get
 
+      # NEW STEP: Generates the missing android directory and Gradle configuration automatically
+      - name: Auto-generate Android project files
+        run: flutter create . --platforms=android
+
       - name: Build Release APK
         run: flutter build apk --release --no-tree-shake-icons
 
