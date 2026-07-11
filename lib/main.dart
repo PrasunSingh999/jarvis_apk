@@ -637,8 +637,8 @@ class _StaggerIn extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final start = (index * 0.08).clamp(0.0, 0.8);
-    final end = (start + 0.5).clamp(0.0, 1.0);
+    final double start = (index * 0.08).clamp(0.0, 0.8).toDouble();
+    final double end = (start + 0.5).clamp(0.0, 1.0).toDouble();
     final anim = CurvedAnimation(
       parent: controller,
       curve: Interval(start, end, curve: Curves.easeOutCubic),
