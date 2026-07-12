@@ -439,8 +439,8 @@ const canvas = document.getElementById('waveCanvas');
 const ctx = canvas.getContext('2d');
 const miniCanvas = document.getElementById('miniWaveLeft');
 const miniCtx = miniCanvas.getContext('2d');
-let analyser, dataArray, audioCtx, micStream;
 let rafId;
+let listeningActive = false;
 
 function drawIdleWave(){
   ctx.clearRect(0,0,canvas.width,canvas.height);
@@ -464,12 +464,19 @@ function drawIdleWave(){
   }
   miniCtx.stroke();
 
-  rafId = requestAnimationFrame(drawIdleWave);
+  rafId = requestAnimationFrame(listeningActive ? drawActiveWave : drawIdleWave);
 }
 
-function drawLiveWave(){
-  if(!analyser) return;
-  analyser.getByteFrequencyData(dataArray);
+// NOTE: this used to pull real amplitude data from a second getUserMedia()
+// stream. That second stream competed with SpeechRecognition for exclusive
+// microphone access on some systems (Windows/Edge in particular), causing
+// recognition to silently fail with "no-speech" / "not-allowed" errors even
+// though the user was actively speaking. This version is a synthetic
+// "looks-alive" animation instead — it doesn't touch the microphone at all,
+// so it can no longer interfere with real speech recognition.
+let waveSeed = 0;
+function drawActiveWave(){
+  waveSeed += 1;
   ctx.clearRect(0,0,canvas.width,canvas.height);
   miniCtx.clearRect(0,0,miniCanvas.width,miniCanvas.height);
   const barCount = 48;
@@ -478,44 +485,32 @@ function drawLiveWave(){
   const miniBarWidth = miniCanvas.width / miniBarCount;
 
   for(let i=0; i<barCount; i++){
-    const v = dataArray[Math.floor(i * dataArray.length / barCount)] / 255;
+    const v = 0.25 + 0.65 * Math.abs(Math.sin(waveSeed*0.12 + i*0.5)) * (0.6 + Math.random()*0.4);
     const h = Math.max(2, v * canvas.height);
     const hue = i/barCount;
     ctx.fillStyle = `rgba(${94 + hue*160}, ${235 - hue*80}, 255, 0.85)`;
     ctx.fillRect(i*barWidth, (canvas.height-h)/2, barWidth-2, h);
   }
   for(let i=0; i<miniBarCount; i++){
-    const v = dataArray[Math.floor(i * dataArray.length / miniBarCount)] / 255;
+    const v = 0.2 + 0.6 * Math.abs(Math.sin(waveSeed*0.15 + i*0.6)) * (0.6 + Math.random()*0.4);
     const h = Math.max(1, v * miniCanvas.height);
     miniCtx.fillStyle = 'rgba(94,235,255,0.7)';
     miniCtx.fillRect(i*miniBarWidth, (miniCanvas.height-h)/2, miniBarWidth-1.5, h);
   }
 
-  const avg = dataArray.reduce((a,b)=>a+b,0) / dataArray.length / 255;
+  const avg = 0.35 + 0.3 * Math.abs(Math.sin(waveSeed*0.1));
   coreCircle.setAttribute('r', 42 + avg * 24);
   coreCircle.setAttribute('opacity', 0.7 + avg * 0.3);
-  rafId = requestAnimationFrame(drawLiveWave);
+  rafId = requestAnimationFrame(listeningActive ? drawActiveWave : drawIdleWave);
 }
 
-async function startMicVisualizer(){
-  try{
-    micStream = await navigator.mediaDevices.getUserMedia({audio:true});
-    audioCtx = new (window.AudioContext || window.webkitAudioContext)();
-    const source = audioCtx.createMediaStreamSource(micStream);
-    analyser = audioCtx.createAnalyser();
-    analyser.fftSize = 128;
-    dataArray = new Uint8Array(analyser.frequencyBinCount);
-    source.connect(analyser);
-    cancelAnimationFrame(rafId);
-    drawLiveWave();
-  }catch(e){
-    console.warn('Mic visualizer unavailable:', e);
-  }
+function startMicVisualizer(){
+  listeningActive = true;
+  cancelAnimationFrame(rafId);
+  drawActiveWave();
 }
 function stopMicVisualizer(){
-  if(micStream){ micStream.getTracks().forEach(t=>t.stop()); micStream = null; }
-  if(audioCtx){ audioCtx.close(); audioCtx = null; }
-  analyser = null;
+  listeningActive = false;
   coreCircle.setAttribute('r', 42);
   coreCircle.setAttribute('opacity', 0.85);
   cancelAnimationFrame(rafId);
@@ -529,6 +524,7 @@ drawIdleWave();
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 let recognition = null;
 let isListening = false;
+let noSpeechRetryDone = false;
 
 if(SR){
   recognition = new SR();
@@ -559,10 +555,20 @@ if(SR){
     setState('idle');
     if(e.error === 'not-allowed' || e.error === 'service-not-allowed'){
       hintText.textContent = 'Microphone access denied — check browser permissions.';
+      noSpeechRetryDone = false;
+    } else if(e.error === 'no-speech' && !noSpeechRetryDone){
+      // Brief hiccups (mic still initializing, momentary silence) are common
+      // and usually recoverable — retry once automatically before giving up.
+      noSpeechRetryDone = true;
+      hintText.textContent = 'Didn\'t catch that — listening again...';
+      setTimeout(() => { try{ recognition.start(); }catch(err){} }, 400);
+    } else {
+      noSpeechRetryDone = false;
     }
   };
 
   recognition.onresult = (event) => {
+    noSpeechRetryDone = false;
     const text = event.results[0][0].transcript;
     addBubble(text, 'user');
     handleCommand(text);
