@@ -40,7 +40,11 @@
     display:flex; flex-direction:column; align-items:flex-start; justify-content:center;
     padding:0 8vw; font-family:'JetBrains Mono', monospace;
     transition:opacity .6s ease, visibility .6s ease;
+    /* Fail-safe: forces the overlay away after 6s no matter what JS does.
+       This is a hard backstop — the real dismissal happens earlier, in JS. */
+    animation:forceBootHide 0s linear 6s forwards;
   }
+  @keyframes forceBootHide{ to{ opacity:0; visibility:hidden; pointer-events:none; } }
   #bootOverlay.hidden{ opacity:0; visibility:hidden; pointer-events:none; }
   #bootOverlay .boot-line{
     font-size:13px; color:var(--cyan-soft); letter-spacing:0.08em; margin-bottom:10px;
@@ -314,7 +318,37 @@
   <div class="boot-line mono" style="animation-delay:1.4s;">&gt; CALIBRATING VOICE ENGINE... <b>OK</b></div>
   <div class="boot-line mono" style="animation-delay:2.1s;">&gt; ALL SYSTEMS NOMINAL. WELCOME, SIR.</div>
   <div class="boot-bar"><i id="bootBar"></i></div>
+  <div class="mono" style="margin-top:22px; font-size:9.5px; color:var(--ink-faint); letter-spacing:0.1em; opacity:0.7;">tap anywhere to skip</div>
 </div>
+<script>
+  // Boot overlay dismissal lives in its own tiny, isolated script that runs
+  // immediately — deliberately BEFORE the large feature script below.
+  // If anything later in the page throws an error, this has already run,
+  // so the user is never stuck staring at a frozen boot screen.
+  (function(){
+    var dismissed = false;
+    function dismissBoot(){
+      if(dismissed) return;
+      dismissed = true;
+      try{
+        var overlay = document.getElementById('bootOverlay');
+        if(overlay) overlay.classList.add('hidden');
+        document.body.classList.add('app-revealed');
+        window.__bootDismissed = true;
+      }catch(e){ /* CSS fail-safe animation still guarantees dismissal */ }
+    }
+    document.addEventListener('DOMContentLoaded', function(){
+      try{
+        var bar = document.getElementById('bootBar');
+        if(bar) requestAnimationFrame(function(){ bar.style.width = '100%'; });
+      }catch(e){}
+      var overlay = document.getElementById('bootOverlay');
+      if(overlay) overlay.addEventListener('click', dismissBoot); // tap anywhere to skip
+    });
+    setTimeout(dismissBoot, 2800); // normal path
+    window.__dismissBoot = dismissBoot;
+  })();
+</script>
 
 <div class="bg-nebula"></div>
 <div class="bg-grid"></div>
@@ -887,14 +921,13 @@ document.querySelectorAll('.chip').forEach(chip => {
 });
 
 window.addEventListener('load', () => {
-  const bootOverlay = document.getElementById('bootOverlay');
-  const bootBar = document.getElementById('bootBar');
-  requestAnimationFrame(() => { bootBar.style.width = '100%'; });
+  // The boot overlay is dismissed independently (see the small script right
+  // after it in the HTML) — this only needs to trigger the spoken greeting,
+  // and it's wrapped so a speech-synthesis quirk can't break anything else.
   setTimeout(() => {
-    bootOverlay.classList.add('hidden');
-    document.body.classList.add('app-revealed');
-    speak('All systems online. How can I help you today?');
-  }, 2800);
+    try{ speak('All systems online. How can I help you today?'); }
+    catch(e){ console.warn('Greeting speech failed:', e); }
+  }, 2900);
 });
 </script>
 </body>
